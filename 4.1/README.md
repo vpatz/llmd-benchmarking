@@ -15,6 +15,73 @@ replicas share the same pod template. Without this pattern, one GPU vendor's cap
 2. **AMD instance** (`qwen2-7b-instruct-amd`) — has **no router** (no scheduler, no route, no gateway). Its pods carry
   the same `llm-pool: qwen2-7b` label, so the EPP from the NVIDIA instance discovers and routes traffic to them.
 
+
+
+## Deployment
+
+```bash
+# 1. Deploy the NVIDIA instance (creates InferencePool, EPP, HTTPRoute, Gateway).
+#    Use the -inferencepool-v1alpha2.yaml variant if your CRD validates pool.spec as v1alpha2.
+oc apply -f llm-inference-service-qwen2-7b-nvidia-with-scheduler.yaml
+
+# 2. Deploy the AMD instance (pods join the existing InferencePool via shared label)
+oc apply -f llm-inference-service-qwen2-7b-amd-no-scheduler.yaml
+
+# 3. Get the list of kserve worker pods
+oc get pods
+
+# sample output
+NAME                                                              READY   STATUS     RESTARTS   AGE
+qwen2-7b-instruct-amd-kserve-67965f8484-8hz4m                     0/1     Init:0/1   0          29s
+qwen2-7b-instruct-amd-kserve-67965f8484-dz9x6                     0/1     Init:0/1   0          29s
+qwen2-7b-instruct-nvidia-kserve-759dbf7f88-2xk7m                  0/1     Init:0/1   0          70s
+qwen2-7b-instruct-nvidia-kserve-759dbf7f88-xklf5                  0/1     Init:0/1   0          70s
+qwen2-7b-instruct-nvidia-kserve-router-scheduler-55d69dfbcjwx55   1/1     Running    0          70s
+
+# 4. Add labels manually to the pods as the current KServe does not automatically do this
+oc label pod qwen2-7b-instruct-nvidia-kserve-<...> llm-pool=qwen2-7b
+oc label pod qwen2-7b-instruct-amd-kserve-<...> llm-pool=qwen2-7b
+
+
+# 5. Call endpoint 
+curl -k \
+  -H "Authorization: Bearer $(oc whoami -t)" \
+  -H "Content-Type: application/json" \
+  -X POST \
+  "https://inference-gateway.apps.sovereign-ai-stack-cl02.ocp.speedcloud.co.in/vinod/qwen2-7b-instruct-nvidia/v1/chat/completions" \
+  -d '{
+    "model": "Qwen/Qwen2.5-7B-Instruct",
+    "messages": [
+      {"role": "user", "content": "What is role of shadow AI?"}
+    ],
+    "max_tokens": 1000
+  }'
+
+
+# 6. To see the target pod selected by the router 
+
+oc logs -l llm-pool=qwen2-7b -c main -f --prefix=true | grep chat
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ## Architecture
 
 ```
@@ -39,7 +106,7 @@ replicas share the same pod template. Without this pattern, one GPU vendor's cap
               │                                   │
    ┌──────────┴──────────┐             ┌──────────┴──────────┐
    │  NVIDIA vLLM Pods   │             │   AMD vLLM Pods     │
-   │  (3 replicas)       │             │   (2 replicas)      │
+   │  (n1 replicas)      │             │   (n2 replicas)     │
    │  nvidia.com/gpu: 1  │             │  amd.com/gpu: 1     │
    └─────────────────────┘             └─────────────────────┘
 ```
@@ -107,33 +174,9 @@ oc explain llminferenceservice.spec.router.scheduler.pool.spec --recursive
 
 If `oc apply` fails with `**matchLabels` must be of type string**, `**extensionRef: Required value`**, or `**targetPortNumber: Required value**`, you used the **v1** shape but the apiserver still embeds **v1alpha2**. Do **not** nest `matchLabels`; put label keys directly under `selector`. Use `[llm-inference-service-qwen2-7b-nvidia-with-scheduler-inferencepool-v1alpha2.yaml](llm-inference-service-qwen2-7b-nvidia-with-scheduler-inferencepool-v1alpha2.yaml)` instead of the default NVIDIA manifest.
 
-## Deployment
-
-```bash
-# 1. Deploy the NVIDIA instance (creates InferencePool, EPP, HTTPRoute, Gateway).
-#    Use the -inferencepool-v1alpha2.yaml variant if your CRD validates pool.spec as v1alpha2.
-oc apply -f llm-inference-service-qwen2-7b-nvidia-with-scheduler.yaml
-
-# 2. Deploy the AMD instance (pods join the existing InferencePool via shared label)
-oc apply -f llm-inference-service-qwen2-7b-amd-no-scheduler.yaml
-
-# 3. Get the list of kserve worker pods
-oc get pods
-
-# sample output
-NAME                                                              READY   STATUS     RESTARTS   AGE
-qwen2-7b-instruct-amd-kserve-67965f8484-8hz4m                     0/1     Init:0/1   0          29s
-qwen2-7b-instruct-amd-kserve-67965f8484-dz9x6                     0/1     Init:0/1   0          29s
-qwen2-7b-instruct-nvidia-kserve-759dbf7f88-2xk7m                  0/1     Init:0/1   0          70s
-qwen2-7b-instruct-nvidia-kserve-759dbf7f88-xklf5                  0/1     Init:0/1   0          70s
-qwen2-7b-instruct-nvidia-kserve-router-scheduler-55d69dfbcjwx55   1/1     Running    0          70s
-
-# 3. Add labels manually to the pods as the current KServe does not automatically do this
-oc label pod qwen2-7b-instruct-nvidia-kserve-<...> llm-pool=qwen2-7b
-oc label pod qwen2-7b-instruct-amd-kserve-<...> llm-pool=qwen2-7b
 
 
-```
+
 
 ## Configuration Summary
 
@@ -147,7 +190,7 @@ oc label pod qwen2-7b-instruct-amd-kserve-<...> llm-pool=qwen2-7b
 | Shared label    | `llm-pool: qwen2-7b`              | `llm-pool: qwen2-7b` |
 
 
-## Verification
+## Verify deployment steps
 
 ```bash
 # Check both services
