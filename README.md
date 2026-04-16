@@ -1,21 +1,17 @@
 # llmd-benchmarking
-Repo for deployment and benchmarking llm-d on cluster with heterogeneous GPUs.
 
+Repo for deployment and benchmarking llm-d on a cluster with heterogeneous GPUs.
 
-# Deployment directories
+## Deployment directories
 
-* llmd using default K8s routing (baseline)
-  * Deploy on NVIDIA GPU (1.1)
-  * Deploy on AMD GPU (1.2)
-  
-* llmd with prefix-based routing on same GPU type
-  * Deploy on NVIDIA GPU (2.1)
-  * Deploy on AMD GPU (2.2)
+Each **Experiment** cell links to that deployment’s directory ([`4.1`](4.1/README.md) opens the experiment README).
 
-* llmd with prefill-decode disaggregated inference on same GPU type
-  * Deploy on NVIDIA GPU (3.1)
-    
-* llmd with pref-based routing on hetereogeneous GPU types
-  * Deploy on NVIDIA, AMD GPUs (4.1)
-  * Deploy on NVIDIA, AMD, Intel Gaudi GPUs (4.2) 
- 
+| Experiment | Category | Target hardware |
+| --- | --- | --- |
+| [`1.1`](1.1/README.md) | Default Kubernetes routing (baseline) | NVIDIA GPU |
+| [`1.2`](1.2/README.md) | Default Kubernetes routing (baseline) | AMD GPU |
+| [`2.1`](2.1/README.md) | Prefix-based routing (same GPU type) | NVIDIA GPU |
+| [`2.2`](2.2/README.md) | Prefix-based routing (same GPU type) | AMD GPU |
+| [`3.1`](3.1/README.md) | Prefill–decode disaggregated (same GPU type) | NVIDIA GPU |
+| [`4.1`](4.1/README.md) | Prefix-based routing (heterogeneous GPU types) | NVIDIA and AMD GPUs |
+| [`4.2`](4.2/README.md) | Prefix-based routing (heterogeneous GPU types) | NVIDIA, AMD, and Intel Gaudi GPUs |
