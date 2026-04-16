@@ -11,7 +11,7 @@ replicas share the same pod template. Without this pattern, one GPU vendor's cap
 ## Solution
 
 1. **NVIDIA instance** (`qwen2-7b-instruct-nvidia`) — creates the scheduler/EPP, InferencePool, HTTPRoute, and Gateway.
-   The InferencePool uses a custom selector (`llm-pool: qwen2-7b`) instead of the default name-based selector. There is no separate object named `llm-pool`; it is a **label** on workload pods. The InferencePool resource is named `qwen2-7b-instruct-nvidia-inference-pool` (`kubectl get inferencepool`).
+   The InferencePool uses a custom selector (`llm-pool: qwen2-7b`) instead of the default name-based selector. There is no separate object named `llm-pool`; it is a **label** on workload pods. The InferencePool resource is named `qwen2-7b-instruct-nvidia-inference-pool` (`oc get inferencepool`).
 2. **AMD instance** (`qwen2-7b-instruct-amd`) — has **no router** (no scheduler, no route, no gateway). Its pods carry
    the same `llm-pool: qwen2-7b` label, so the EPP from the NVIDIA instance discovers and routes traffic to them.
 
@@ -100,20 +100,27 @@ spec:
 Inspect what your cluster expects:
 
 ```bash
-kubectl explain llminferenceservice.spec.router.scheduler.pool.spec --recursive
+oc explain llminferenceservice.spec.router.scheduler.pool.spec --recursive
 ```
 
-If `kubectl apply` fails with **`matchLabels` must be of type string**, **`extensionRef: Required value`**, or **`targetPortNumber: Required value`**, you used the **v1** shape but the apiserver still embeds **v1alpha2**. Do **not** nest `matchLabels`; put label keys directly under `selector`. Use [`llm-inference-service-qwen2-7b-nvidia-with-scheduler-inferencepool-v1alpha2.yaml`](llm-inference-service-qwen2-7b-nvidia-with-scheduler-inferencepool-v1alpha2.yaml) instead of the default NVIDIA manifest.
+If `oc apply` fails with **`matchLabels` must be of type string**, **`extensionRef: Required value`**, or **`targetPortNumber: Required value`**, you used the **v1** shape but the apiserver still embeds **v1alpha2**. Do **not** nest `matchLabels`; put label keys directly under `selector`. Use [`llm-inference-service-qwen2-7b-nvidia-with-scheduler-inferencepool-v1alpha2.yaml`](llm-inference-service-qwen2-7b-nvidia-with-scheduler-inferencepool-v1alpha2.yaml) instead of the default NVIDIA manifest.
 
 ## Deployment
 
 ```bash
 # 1. Deploy the NVIDIA instance (creates InferencePool, EPP, HTTPRoute, Gateway).
 #    Use the -inferencepool-v1alpha2.yaml variant if your CRD validates pool.spec as v1alpha2.
-kubectl apply -f llm-inference-service-qwen2-7b-nvidia-with-scheduler.yaml
+oc apply -f llm-inference-service-qwen2-7b-nvidia-with-scheduler.yaml
 
 # 2. Deploy the AMD instance (pods join the existing InferencePool via shared label)
-kubectl apply -f llm-inference-service-qwen2-7b-amd-no-scheduler.yaml
+oc apply -f llm-inference-service-qwen2-7b-amd-no-scheduler.yaml
+
+
+# 3. Add labels manually to the pods as the current KServe does not automatically do this
+oc label pod qwen2-7b-instruct-nvidia-kserve-<...> llm-pool=qwen2-7b
+oc label pod qwen2-7b-instruct-amd-kserve-<...> llm-pool=qwen2-7b
+
+
 ```
 
 ## Configuration Summary
@@ -130,16 +137,16 @@ kubectl apply -f llm-inference-service-qwen2-7b-amd-no-scheduler.yaml
 
 ```bash
 # Check both services
-kubectl get llminferenceservice
+oc get llminferenceservice
 
 # Verify pods are on the correct GPU nodes
-kubectl get pods -o wide -l llm-pool=qwen2-7b
+oc get pods -o wide -l llm-pool=qwen2-7b
 
 # Confirm the InferencePool selects pods from both instances
-kubectl get inferencepool -o yaml
+oc get inferencepool -o yaml
 
 # Check scheduler logs for routing across all replicas
-kubectl logs -l app.kubernetes.io/component=llminferenceservice-scheduler -f
+oc logs -l app.kubernetes.io/component=llminferenceservice-scheduler -f
 
 # Send a test request
 curl -k https://<route-url>/v1/completions \
@@ -157,10 +164,10 @@ Each instance can be scaled independently:
 
 ```bash
 # Scale NVIDIA replicas
-kubectl patch llmisvc qwen2-7b-instruct-nvidia --type merge -p '{"spec":{"replicas":5}}'
+oc patch llmisvc qwen2-7b-instruct-nvidia --type merge -p '{"spec":{"replicas":5}}'
 
 # Scale AMD replicas
-kubectl patch llmisvc qwen2-7b-instruct-amd --type merge -p '{"spec":{"replicas":4}}'
+oc patch llmisvc qwen2-7b-instruct-amd --type merge -p '{"spec":{"replicas":4}}'
 ```
 
 The EPP automatically discovers new pods as they match the shared `llm-pool: qwen2-7b` label.
