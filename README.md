@@ -5,7 +5,6 @@ Repo for deployment and benchmarking llm-d on cluster with heterogeneous GPUs.
 # Deployment directories
 
 * llmd using default K8s routing (baseline)
-  
   * Deploy on NVIDIA GPU (1.1)
   * Deploy on AMD GPU (1.2)
   
