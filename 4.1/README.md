@@ -11,9 +11,9 @@ replicas share the same pod template. Without this pattern, one GPU vendor's cap
 ## Solution
 
 1. **NVIDIA instance** (`qwen2-7b-instruct-nvidia`) — creates the scheduler/EPP, InferencePool, HTTPRoute, and Gateway.
-   The InferencePool uses a custom selector (`llm-pool: qwen2-7b`) instead of the default name-based selector. There is no separate object named `llm-pool`; it is a **label** on workload pods. The InferencePool resource is named `qwen2-7b-instruct-nvidia-inference-pool` (`oc get inferencepool`).
+  The InferencePool uses a custom selector (`llm-pool: qwen2-7b`) instead of the default name-based selector. There is no separate object named `llm-pool`; it is a **label** on workload pods. The InferencePool resource is named `qwen2-7b-instruct-nvidia-inference-pool` (`oc get inferencepool`).
 2. **AMD instance** (`qwen2-7b-instruct-amd`) — has **no router** (no scheduler, no route, no gateway). Its pods carry
-   the same `llm-pool: qwen2-7b` label, so the EPP from the NVIDIA instance discovers and routes traffic to them.
+  the same `llm-pool: qwen2-7b` label, so the EPP from the NVIDIA instance discovers and routes traffic to them.
 
 ## Architecture
 
@@ -92,10 +92,12 @@ spec:
 
 `spec.router.scheduler.pool.spec` is validated against the **InferencePool** shape your cluster’s `LLMInferenceService` CRD was built for. Two variants exist:
 
-| Variant | Selector | Ports | EPP reference |
-|---------|----------|-------|----------------|
-| **v1** (`inference.networking.k8s.io/v1`) | `selector.matchLabels` (nested map) | `targetPorts: [{ number: … }]` | `endpointPickerRef` with `port.number` |
-| **v1alpha2** (`inference.networking.x-k8s.io`) | **Flat** map under `selector` (each value is a **string**) | `targetPortNumber` | `extensionRef` with `portNumber` |
+
+| Variant                                        | Selector                                                   | Ports                          | EPP reference                          |
+| ---------------------------------------------- | ---------------------------------------------------------- | ------------------------------ | -------------------------------------- |
+| **v1** (`inference.networking.k8s.io/v1`)      | `selector.matchLabels` (nested map)                        | `targetPorts: [{ number: … }]` | `endpointPickerRef` with `port.number` |
+| **v1alpha2** (`inference.networking.x-k8s.io`) | **Flat** map under `selector` (each value is a **string**) | `targetPortNumber`             | `extensionRef` with `portNumber`       |
+
 
 Inspect what your cluster expects:
 
@@ -103,7 +105,7 @@ Inspect what your cluster expects:
 oc explain llminferenceservice.spec.router.scheduler.pool.spec --recursive
 ```
 
-If `oc apply` fails with **`matchLabels` must be of type string**, **`extensionRef: Required value`**, or **`targetPortNumber: Required value`**, you used the **v1** shape but the apiserver still embeds **v1alpha2**. Do **not** nest `matchLabels`; put label keys directly under `selector`. Use [`llm-inference-service-qwen2-7b-nvidia-with-scheduler-inferencepool-v1alpha2.yaml`](llm-inference-service-qwen2-7b-nvidia-with-scheduler-inferencepool-v1alpha2.yaml) instead of the default NVIDIA manifest.
+If `oc apply` fails with `**matchLabels` must be of type string**, `**extensionRef: Required value`**, or `**targetPortNumber: Required value**`, you used the **v1** shape but the apiserver still embeds **v1alpha2**. Do **not** nest `matchLabels`; put label keys directly under `selector`. Use `[llm-inference-service-qwen2-7b-nvidia-with-scheduler-inferencepool-v1alpha2.yaml](llm-inference-service-qwen2-7b-nvidia-with-scheduler-inferencepool-v1alpha2.yaml)` instead of the default NVIDIA manifest.
 
 ## Deployment
 
@@ -115,6 +117,16 @@ oc apply -f llm-inference-service-qwen2-7b-nvidia-with-scheduler.yaml
 # 2. Deploy the AMD instance (pods join the existing InferencePool via shared label)
 oc apply -f llm-inference-service-qwen2-7b-amd-no-scheduler.yaml
 
+# 3. Get the list of kserve worker pods
+oc get pods
+
+# sample output
+NAME                                                              READY   STATUS     RESTARTS   AGE
+qwen2-7b-instruct-amd-kserve-67965f8484-8hz4m                     0/1     Init:0/1   0          29s
+qwen2-7b-instruct-amd-kserve-67965f8484-dz9x6                     0/1     Init:0/1   0          29s
+qwen2-7b-instruct-nvidia-kserve-759dbf7f88-2xk7m                  0/1     Init:0/1   0          70s
+qwen2-7b-instruct-nvidia-kserve-759dbf7f88-xklf5                  0/1     Init:0/1   0          70s
+qwen2-7b-instruct-nvidia-kserve-router-scheduler-55d69dfbcjwx55   1/1     Running    0          70s
 
 # 3. Add labels manually to the pods as the current KServe does not automatically do this
 oc label pod qwen2-7b-instruct-nvidia-kserve-<...> llm-pool=qwen2-7b
@@ -125,13 +137,15 @@ oc label pod qwen2-7b-instruct-amd-kserve-<...> llm-pool=qwen2-7b
 
 ## Configuration Summary
 
+
 | Feature         | NVIDIA Instance                   | AMD Instance         |
-|-----------------|-----------------------------------|----------------------|
+| --------------- | --------------------------------- | -------------------- |
 | Replicas        | 3                                 | 2                    |
 | GPU             | 1x NVIDIA per replica             | 1x AMD per replica   |
 | Scheduler / EPP | Yes (creates InferencePool + EPP) | No                   |
 | Route / Gateway | Yes                               | No                   |
 | Shared label    | `llm-pool: qwen2-7b`              | `llm-pool: qwen2-7b` |
+
 
 ## Verification
 

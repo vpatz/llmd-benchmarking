@@ -2,7 +2,7 @@
 
 Repo for deployment and benchmarking llm-d on a cluster with heterogeneous GPUs.
 
-## Deployment directories
+## Experiments
 
 Each **Experiment** cell links to that deployment’s directory ([`4.1`](4.1/README.md) opens the experiment README).
 
@@ -15,3 +15,6 @@ Each **Experiment** cell links to that deployment’s directory ([`4.1`](4.1/REA
 | [`3.1`](3.1/README.md) | Prefill–decode disaggregated (same GPU type) | NVIDIA GPU |
 | [`4.1`](4.1/README.md) | Prefix-based routing (heterogeneous GPU types) | NVIDIA and AMD GPUs |
 | [`4.2`](4.2/README.md) | Prefix-based routing (heterogeneous GPU types) | NVIDIA, AMD, and Intel Gaudi GPUs |
+
+
+## Evaluation using `guidellm`
