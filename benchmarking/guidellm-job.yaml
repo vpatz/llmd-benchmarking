@@ -2,7 +2,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: guidellm-benchmark-job
-  namespace: vllm-inference
+  namespace: vinod
 spec:
   template:
     spec:
@@ -10,11 +10,11 @@ spec:
       - name: guidellm
         image: ghcr.io/vllm-project/guidellm:v0.5.0
         env:
-        - name: HF_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: huggingface-secret
-              key: hf_token
+        #- name: HF_TOKEN
+        #  valueFrom:
+        #    secretKeyRef:
+        #      name: huggingface-secret
+        #      key: hf_token
         - name: HOME
           value: /results
         - name: HF_HOME
@@ -24,11 +24,11 @@ spec:
         - "benchmark"
         - "run"
         - "--target"
-        - "http://vllm-service.vllm-inference.svc.cluster.local:8000"
+        - "https://inference-gateway.apps.sovereign-ai-stack-cl02.ocp.speedcloud.co.in/vinod/qwen2-7b-instruct-nvidia"
         - "--model"
-        - "meta-llama/Llama-3.1-8B-Instruct"
+        - "Qwen/Qwen2.5-7B-Instruct"
         - "--processor"
-        - "meta-llama/Llama-3.1-8B-Instruct"
+        - "Qwen/Qwen2.5-7B-Instruct"
         - "--data"
         - '{"prompt_tokens":1000,"output_tokens":1000}'
         - "--rate-type"
