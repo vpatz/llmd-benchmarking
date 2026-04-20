@@ -10,19 +10,19 @@ replicas share the same pod template. Without this pattern, one GPU vendor's cap
 
 ## Solution
 
+Tested on OpenShift AI 3.3.1
+
 1. **NVIDIA instance** (`qwen2-7b-instruct-nvidia`) — creates the scheduler/EPP, InferencePool, HTTPRoute, and Gateway.
   The InferencePool uses a custom selector (`llm-pool: qwen2-7b`) instead of the default name-based selector. There is no separate object named `llm-pool`; it is a **label** on workload pods. The InferencePool resource is named `qwen2-7b-instruct-nvidia-inference-pool` (`oc get inferencepool`).
 2. **AMD instance** (`qwen2-7b-instruct-amd`) — has **no router** (no scheduler, no route, no gateway). Its pods carry
   the same `llm-pool: qwen2-7b` label, so the EPP from the NVIDIA instance discovers and routes traffic to them.
-
-
 
 ## Deployment
 
 ```bash
 # 1. Deploy the NVIDIA instance (creates InferencePool, EPP, HTTPRoute, Gateway).
 #    Use the -inferencepool-v1alpha2.yaml variant if your CRD validates pool.spec as v1alpha2.
-oc apply -f llm-inference-service-qwen2-7b-nvidia-with-scheduler.yaml
+oc apply -f llm-inference-service-qwen2-7b-nvidia-with-scheduler-inferencepool.yaml
 
 # 2. Deploy the AMD instance (pods join the existing InferencePool via shared label)
 oc apply -f llm-inference-service-qwen2-7b-amd-no-scheduler.yaml
@@ -65,24 +65,9 @@ oc logs -l llm-pool=qwen2-7b -c main -f --prefix=true | grep chat
 
 ```
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 ## Architecture
+
+From KServe [PR](https://github.com/kserve/kserve/pull/5374)  on heterogeneous load balancing sample.
 
 ```
                          ┌──────────────┐
@@ -172,11 +157,7 @@ Inspect what your cluster expects:
 oc explain llminferenceservice.spec.router.scheduler.pool.spec --recursive
 ```
 
-If `oc apply` fails with `**matchLabels` must be of type string**, `**extensionRef: Required value`**, or `**targetPortNumber: Required value**`, you used the **v1** shape but the apiserver still embeds **v1alpha2**. Do **not** nest `matchLabels`; put label keys directly under `selector`. Use `[llm-inference-service-qwen2-7b-nvidia-with-scheduler-inferencepool-v1alpha2.yaml](llm-inference-service-qwen2-7b-nvidia-with-scheduler-inferencepool-v1alpha2.yaml)` instead of the default NVIDIA manifest.
-
-
-
-
+If `oc apply` fails with `**matchLabels` must be of type string**, `**extensionRef: Required value`**, or `**targetPortNumber: Required value`**, you used the **v1** shape but the apiserver still embeds **v1alpha2**. Do **not** nest `matchLabels`; put label keys directly under `selector`. Use `[llm-inference-service-qwen2-7b-nvidia-with-scheduler-inferencepool-v1alpha2.yaml](llm-inference-service-qwen2-7b-nvidia-with-scheduler-inferencepool-v1alpha2.yaml)` instead of the default NVIDIA manifest.
 
 ## Configuration Summary
 

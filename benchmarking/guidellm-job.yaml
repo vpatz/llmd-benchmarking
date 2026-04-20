@@ -8,7 +8,7 @@ spec:
     spec:
       containers:
       - name: guidellm
-        image: ghcr.io/vllm-project/guidellm:v0.5.0
+        image: ghcr.io/vllm-project/guidellm:v0.6.0
         env:
         #- name: HF_TOKEN
         #  valueFrom:
@@ -24,13 +24,15 @@ spec:
         - "benchmark"
         - "run"
         - "--target"
-        - "https://inference-gateway.apps.sovereign-ai-stack-cl02.ocp.speedcloud.co.in/vinod/qwen2-7b-instruct-nvidia"
+        # Use in-cluster service DNS instead of external route hostname.
+        - "http://qwen2-7b-instruct-nvidia-epp-service.vinod.svc.cluster.local:9002"
         - "--model"
         - "Qwen/Qwen2.5-7B-Instruct"
         - "--processor"
         - "Qwen/Qwen2.5-7B-Instruct"
         - "--data"
-        - '{"prompt_tokens":1000,"output_tokens":1000}'
+        - "garage-bAInd/Open-Platypus"
+        #- '{"prompt_tokens":1000,"output_tokens":1000}'
         - "--rate-type"
         - "concurrent"
         - "--max-seconds"
@@ -41,6 +43,9 @@ spec:
         - "/results"
         - "--outputs"
         - "benchmark-results.json,benchmark-results.html"
+        # Skip backend HTTP validation at startup (benchmark requests may still fail if service is down).
+        - "--backend-kwargs"
+        - "{\"api_key\": \"sha256~xxxxxxxxxx\", \"validate_backend\": false}"
         volumeMounts:
         - name: results-volume
           mountPath: /results

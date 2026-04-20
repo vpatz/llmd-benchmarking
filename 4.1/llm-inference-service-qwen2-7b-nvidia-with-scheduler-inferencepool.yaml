@@ -13,7 +13,7 @@ spec:
   model:
     uri: hf://Qwen/Qwen2.5-7B-Instruct
     name: Qwen/Qwen2.5-7B-Instruct
-  replicas: 2
+  replicas: 1
   labels:
     llm-pool: qwen2-7b
   router:
