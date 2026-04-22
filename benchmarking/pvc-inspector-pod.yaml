@@ -1,8 +1,10 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: pvc-inspector
-  namespace: vllm-inference
+  name: pvc-inspector-varun
+  namespace: varun-benchmark
+  labels:
+    benchmark.ibm/owner: varun
 spec:
   containers:
   - name: inspector
@@ -14,4 +16,4 @@ spec:
   volumes:
   - name: results-storage
     persistentVolumeClaim:
-      claimName: guidellm-results-pvc
+      claimName: guidellm-results-pvc-varun

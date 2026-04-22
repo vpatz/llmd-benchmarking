@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: varun-benchmark
+  labels:
+    benchmark.ibm/owner: varun
+    benchmark.ibm/purpose: guidellm-benchmarking

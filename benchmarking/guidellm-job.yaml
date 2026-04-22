@@ -1,14 +1,24 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: guidellm-benchmark-job
-  namespace: vinod
+  name: guidellm-benchmark-job-varun
+  namespace: varun-benchmark
+  labels:
+    benchmark.ibm/owner: varun
 spec:
+  activeDeadlineSeconds: 900
   template:
+    metadata:
+      labels:
+        benchmark.ibm/owner: varun
     spec:
+      hostAliases:
+      - ip: 10.25.110.135
+        hostnames:
+        - inference-gateway.apps.sovereign-ai-stack-cl02.ocp.speedcloud.co.in
       containers:
       - name: guidellm
-        image: ghcr.io/vllm-project/guidellm:v0.5.0
+        image: ghcr.io/vllm-project/guidellm:v0.6.0
         env:
         #- name: HF_TOKEN
         #  valueFrom:
@@ -19,34 +29,154 @@ spec:
           value: /results
         - name: HF_HOME
           value: /results/.cache
-        command: ["guidellm"]
+        # oc create secret generic guidellm-gateway-token-varun -n varun-benchmark --from-literal=token='$(oc whoami -t)'
+        - name: GATEWAY_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: guidellm-gateway-token-varun
+              key: token
+        - name: GUIDELLM_TARGET
+          value: https://inference-gateway.apps.sovereign-ai-stack-cl02.ocp.speedcloud.co.in/vinod/qwen2-7b-instruct-nvidia
+        - name: GUIDELLM_MODEL
+          value: Qwen/Qwen2.5-7B-Instruct
+        - name: GUIDELLM_RATE
+          value: "1,10"
+        - name: GUIDELLM_DATA_SAMPLES
+          value: "100"
+        - name: GUIDELLM_MAX_REQUESTS
+          value: "30"
+        - name: GUIDELLM_MAX_SECONDS
+          value: "180"
+        command: ["/bin/sh", "-c"]
         args:
-        - "benchmark"
-        - "run"
-        - "--target"
-        - "https://inference-gateway.apps.sovereign-ai-stack-cl02.ocp.speedcloud.co.in/vinod/qwen2-7b-instruct-nvidia"
-        - "--model"
-        - "Qwen/Qwen2.5-7B-Instruct"
-        - "--processor"
-        - "Qwen/Qwen2.5-7B-Instruct"
-        - "--data"
-        - '{"prompt_tokens":1000,"output_tokens":1000}'
-        - "--rate-type"
-        - "concurrent"
-        - "--max-seconds"
-        - "300"
-        - "--rate"
-        - "1,2,4"
-        - "--output-dir"
-        - "/results"
-        - "--outputs"
-        - "benchmark-results.json,benchmark-results.html"
+          - |
+            set -eu
+            RUN_SEED="$(date +%s)"
+            export RUN_SEED
+            python - <<'PY'
+            import json
+            import os
+            import random
+
+            random.seed(int(os.environ["RUN_SEED"]))
+
+            verbs = [
+                "Explain",
+                "Summarize",
+                "Describe",
+                "Compare",
+                "Outline",
+                "List the main tradeoffs in",
+                "Provide a short guide to",
+                "Give a practical overview of",
+                "Discuss the benefits and risks of",
+                "Clarify the role of",
+            ]
+            topics = [
+                "container orchestration",
+                "API gateways",
+                "distributed tracing",
+                "load testing before production releases",
+                "rate limiting in shared platforms",
+                "GPU utilization for inference",
+                "model serving observability",
+                "network policies in Kubernetes",
+                "batching for LLM inference",
+                "autoscaling for online inference",
+                "request timeouts in distributed systems",
+                "backpressure in streaming services",
+                "token throughput benchmarking",
+                "service discovery in clusters",
+                "latency versus throughput optimization",
+                "canary deployments for ML services",
+                "error budgets in production operations",
+                "retry behavior in API clients",
+                "queueing effects under high concurrency",
+                "resource isolation in shared clusters",
+            ]
+            constraints = [
+                "in two short paragraphs",
+                "with one concrete example",
+                "for an engineer new to the topic",
+                "with a focus on production reliability",
+                "with a focus on performance tradeoffs",
+                "using concise technical language",
+                "without using bullet points",
+                "with an emphasis on practical operations",
+            ]
+
+            prompts = set()
+            while len(prompts) < 120:
+                prompt = f"{random.choice(verbs)} {random.choice(topics)} {random.choice(constraints)}."
+                prompts.add(prompt)
+
+            prompts = list(prompts)
+            random.shuffle(prompts)
+
+            with open("/tmp/default-prompts.jsonl", "w", encoding="utf-8") as f:
+                for prompt in prompts:
+                    f.write(json.dumps({"prompt": prompt}) + "\n")
+            PY
+            # Fail fast if the configured target/token cannot serve OpenAI-compatible requests.
+            python - <<'PY'
+            import os
+            import sys
+
+            import httpx
+
+            target = os.environ["GUIDELLM_TARGET"].rstrip("/")
+            model = os.environ["GUIDELLM_MODEL"]
+            headers = {"Authorization": f"Bearer {os.environ['GATEWAY_TOKEN']}"}
+            timeout = httpx.Timeout(60.0, connect=5.0)
+
+            try:
+                with httpx.Client(http2=True, verify=False, timeout=timeout, headers=headers) as client:
+                    models = client.get(f"{target}/v1/models")
+                    models.raise_for_status()
+                    models_json = models.json()
+                    if "data" not in models_json:
+                        raise ValueError("/v1/models response missing data")
+
+                    completion = client.post(
+                        f"{target}/v1/chat/completions",
+                        json={
+                            "model": model,
+                            "messages": [{"role": "user", "content": "ping"}],
+                            "max_tokens": 8,
+                            "stream": False,
+                        },
+                    )
+                    completion.raise_for_status()
+                    completion_json = completion.json()
+                    if "choices" not in completion_json:
+                        raise ValueError("/v1/chat/completions response missing choices")
+            except Exception as exc:
+                print(f"GuideLLM preflight failed for {target}: {exc}", file=sys.stderr)
+                sys.exit(1)
+
+            print(f"GuideLLM preflight passed for {target}")
+            PY
+
+            exec guidellm benchmark run \
+              --target "${GUIDELLM_TARGET}" \
+              --model "${GUIDELLM_MODEL}" \
+              --processor "${GUIDELLM_MODEL}" \
+              --data "/tmp/default-prompts.jsonl" \
+              --data-samples "${GUIDELLM_DATA_SAMPLES}" \
+              --random-seed "${RUN_SEED}" \
+              --rate-type "concurrent" \
+              --max-seconds "${GUIDELLM_MAX_SECONDS}" \
+              --max-requests "${GUIDELLM_MAX_REQUESTS}" \
+              --rate "${GUIDELLM_RATE}" \
+              --output-dir "/results" \
+              --outputs "benchmark-results.json,benchmark-results.html,benchmark-results.csv" \
+              --backend-kwargs "{\"api_key\": \"${GATEWAY_TOKEN}\", \"validate_backend\": false, \"timeout\": 60.0}"
         volumeMounts:
         - name: results-volume
           mountPath: /results
       volumes:
       - name: results-volume
         persistentVolumeClaim:
-          claimName: guidellm-results-pvc
+          claimName: guidellm-results-pvc-varun
       restartPolicy: Never
   backoffLimit: 1

@@ -1,3 +1,5 @@
+# Use this if you need the cluster default StorageClass (omit storageClassName).
+# Some projects cannot bind lvms-h100nvl-node-01-sdb; ask admin which SC to use: oc get storageclass
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -11,4 +13,3 @@ spec:
   resources:
     requests:
       storage: 50Gi
-  storageClassName: lvms-h100nvl-node-01-sdb
