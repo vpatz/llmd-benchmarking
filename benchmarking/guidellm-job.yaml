@@ -19,33 +19,43 @@ spec:
           value: /results
         - name: HF_HOME
           value: /results/.cache
+        - name: NO_PROXY
+          value: "localhost,127.0.0.1,.svc,.svc.cluster.local"
+        - name: no_proxy
+          value: "localhost,127.0.0.1,.svc,.svc.cluster.local"
         command: ["guidellm"]
         args:
         - "benchmark"
         - "run"
         - "--target"
-        # Use in-cluster service DNS instead of external route hostname.
-        - "http://qwen2-7b-instruct-nvidia-epp-service.vinod.svc.cluster.local:9002"
+        # Workload service is HTTPS on port 8000 (HTTP returns empty reply).
+        #- "http://qwen2-7b-instruct-nvidia-kserve-workload-svc.vinod.svc.cluster.local:8000"
+        - "http://qwen2-7b-instruct-nvidia-inference-pool-ip-22983f3e.vinod.svc.cluster.local:8000"
         - "--model"
         - "Qwen/Qwen2.5-7B-Instruct"
         - "--processor"
         - "Qwen/Qwen2.5-7B-Instruct"
         - "--data"
-        - "garage-bAInd/Open-Platypus"
-        #- '{"prompt_tokens":1000,"output_tokens":1000}'
+        # Use synthetic prompts for stable token accounting across gateways.
+        - "prompt_tokens=512,output_tokens=128,samples=2000"
         - "--rate-type"
         - "concurrent"
         - "--max-seconds"
         - "300"
         - "--rate"
         - "1,2,4"
+        # Stop early on repeated endpoint failures; avoids huge unusable output files.
+        - "--max-errors"
+        - "200"
+        - "--sample-requests"
+        - "200"
         - "--output-dir"
         - "/results"
         - "--outputs"
         - "benchmark-results.json,benchmark-results.html"
-        # Skip backend HTTP validation at startup (benchmark requests may still fail if service is down).
+        # Disable strict startup validation; some gateways do not expose model validation endpoints.
         - "--backend-kwargs"
-        - "{\"api_key\": \"sha256~xxxxxxxxxx\", \"validate_backend\": false}"
+        - "{\"verify\": false, \"validate_backend\": true}"
         volumeMounts:
         - name: results-volume
           mountPath: /results
