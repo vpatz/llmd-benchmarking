@@ -29,6 +29,7 @@ spec:
           value: /results
         - name: HF_HOME
           value: /results/.cache
+<<<<<<< HEAD
         # oc create secret generic guidellm-gateway-token-varun -n varun-benchmark --from-literal=token='$(oc whoami -t)'
         - name: GATEWAY_TOKEN
           valueFrom:
