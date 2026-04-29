@@ -37,7 +37,7 @@ spec:
         - name: GUIDELLM_PROCESSOR
           value: ibm-granite/granite-4.0-h-tiny
         - name: GUIDELLM_RATE
-          value: "50,100,150,200,250,300,350,400"
+          value: "100,200,300,400,500,600,700,800,900,1000"
         - name: GUIDELLM_MAX_REQUESTS
           value: "20000"
         - name: GUIDELLM_MAX_SECONDS
@@ -94,7 +94,7 @@ spec:
               --sample-requests "200" \
               --data "prompt_tokens=10000,output_tokens=1000,turns=3" \
               --output-dir "/results" \
-              --outputs "1-1-granite4-7b-tiny-r4-tp1-concurrent-saturation.json,1-1-granite4-7b-tiny-r4-tp1-concurrent-saturation.html,1-1-granite4-7b-tiny-r4-tp1-concurrent-saturation.csv" \
+              --outputs "1-1-granite4-7b-tiny-r4-tp1-concurrent-saturation-100-1000.json,1-1-granite4-7b-tiny-r4-tp1-concurrent-saturation-100-1000.html,1-1-granite4-7b-tiny-r4-tp1-concurrent-saturation-100-1000.csv" \
               --backend-kwargs "{\"validate_backend\": false, \"timeout\": 600.0}"
         volumeMounts:
         - name: results-volume
