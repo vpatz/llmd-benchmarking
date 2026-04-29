@@ -1,0 +1,29 @@
+apiVersion: serving.kserve.io/v1alpha1
+kind: LLMInferenceService
+metadata:
+  name: granite4-7b-tiny-amd
+spec:
+  model:
+    uri: hf://ibm-granite/granite-4.0-h-tiny
+    name: ibm-granite/granite-4.0-h-tiny
+  replicas: 2
+  # Same shared label as the NVIDIA instance so that the InferencePool
+  # selector (llm-pool: qwen2-7b) matches these pods too.
+  labels:
+    llm-pool: granite4-7b-tiny
+  # No router — no scheduler, no route, no gateway.
+  # Traffic reaches these pods through the shared InferencePool
+  # managed by the NVIDIA LLMInferenceService's scheduler/EPP.
+  template:
+    containers:
+      - name: main
+        image: ghcr.io/llm-d/llm-d-rocm:v0.6.0
+        resources:
+          limits:
+            cpu: '8'
+            memory: 32Gi
+            amd.com/gpu: "1"
+          requests:
+            cpu: '8'
+            memory: 16Gi
+            amd.com/gpu: "1"

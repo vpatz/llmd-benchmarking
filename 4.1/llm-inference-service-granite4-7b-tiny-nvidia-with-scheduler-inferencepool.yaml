@@ -1,0 +1,45 @@
+# Use this manifest when your cluster's LLMInferenceService CRD embeds InferencePool v1alpha2
+# (inference.networking.x-k8s.io): pool.spec uses a Service-style selector map, extensionRef,
+# and targetPortNumber. If `kubectl apply` of the default NVIDIA sample fails with errors like
+# "extensionRef: Required value" or "matchLabels ... must be of type string", use this file instead.
+#
+# When your CRD expects InferencePool v1 (endpointPickerRef, targetPorts, selector.matchLabels),
+# use llm-inference-service-qwen2-7b-nvidia-with-scheduler.yaml.
+apiVersion: serving.kserve.io/v1alpha1
+kind: LLMInferenceService
+metadata:
+  name: granite4-7b-tiny-nvidia
+spec:
+  model:
+    uri: hf://ibm-granite/granite-4.0-h-tiny
+    name: ibm-granite/granite-4.0-h-tiny
+  replicas: 2
+  labels:
+    llm-pool: granite4-7b-tiny
+  router:
+    scheduler:
+      pool:
+        spec:
+          # v1alpha2: selector is a flat map (label key -> string value), not matchLabels.
+          selector:
+            llm-pool: granite4-7b-tiny
+            kserve.io/component: workload
+          targetPortNumber: 8000
+          extensionRef:
+            name: granite4-7b-tiny-nvidia-epp-service
+            kind: Service
+            portNumber: 9002
+    route: { }
+    gateway: { }
+  template:
+    containers:
+      - name: main
+        resources:
+          limits:
+            cpu: '8'
+            memory: 32Gi
+            nvidia.com/gpu: "1"
+          requests:
+            cpu: '8'
+            memory: 16Gi
+            nvidia.com/gpu: "1"
