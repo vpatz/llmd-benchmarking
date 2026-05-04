@@ -38,6 +38,7 @@ spec:
           value: ibm-granite/granite-4.0-h-tiny
         - name: GUIDELLM_RATE
           value: "100,200,300,400,500,600,700,800,900,1000"
+          #value: "10,50,100"
         - name: GUIDELLM_MAX_REQUESTS
           value: "2000"
         - name: GUIDELLM_MAX_SECONDS
