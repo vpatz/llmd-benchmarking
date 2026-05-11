@@ -1,0 +1,120 @@
+# kv-cache
+apiVersion: serving.kserve.io/v1alpha1
+kind: LLMInferenceService
+metadata:
+  name: granite4-1-30b-kv-cache-routing
+spec:
+  model:
+    uri: hf://ibm-granite/granite-4.1-30b
+    name: ibm-granite/granite-4.1-30b
+  # Two replicas to demonstrate KV cache routing across instances
+  replicas: 2
+  router:
+    scheduler:
+      template:
+        containers:
+          - name: main
+            image: ghcr.io/llm-d/llm-d-inference-scheduler:latest
+            args:
+              - --pool-name
+              - granite4-1-30b-kv-cache-routing-inference-pool
+              - --pool-namespace
+              - vinod
+              - --pool-group
+              - inference.networking.x-k8s.io
+              - --zap-encoder
+              - json
+              - --zap-log-level
+              - debug
+              - -v
+              - "6"
+              - --disable-endpoint-subset-filter
+              - --grpc-port
+              - "9002"
+              - --grpc-health-port
+              - "9003"
+              - --secure-serving
+              - --model-server-metrics-scheme
+              - https
+              - --cert-path
+              - /var/run/kserve/tls
+              - --config-text
+              - |
+                apiVersion: inference.networking.x-k8s.io/v1alpha1
+                kind: EndpointPickerConfig
+                plugins:
+                - type: single-profile-handler
+                - type: queue-scorer
+                - type: kv-cache-utilization-scorer
+                - type: load-aware-scorer
+                - type: random-picker
+                - name: metrics-data-source
+                  type: metrics-data-source
+                - name: core-metrics-extractor
+                  type: core-metrics-extractor
+                  parameters:
+                    defaultEngine: vllm
+                    engineConfigs:
+                    - name: vllm
+                      queuedRequestsSpec: vllm:num_requests_waiting
+                      runningRequestsSpec: vllm:num_requests_running
+                      kvUsageSpec: vllm:kv_cache_usage_perc
+                      loraSpec: ""
+                      cacheInfoSpec: vllm:cache_config_info
+                dataLayer:
+                  sources:
+                  - pluginRef: metrics-data-source
+                    extractors:
+                    - pluginRef: core-metrics-extractor
+                schedulingProfiles:
+                - name: default
+                  plugins:
+                  - pluginRef: queue-scorer
+                    weight: 24
+                  - pluginRef: kv-cache-utilization-scorer
+                    weight: 1
+                  - pluginRef: load-aware-scorer
+                    weight: 24
+                  - pluginRef: random-picker
+    route: { }
+    gateway:
+      refs:
+      - name: openshift-ai-inference
+        namespace: openshift-ingress
+  template:
+    containers:
+      - name: main
+        image: registry.redhat.io/rhaiis/vllm-cuda-rhel9@sha256:ec799bb5eeb7e25b4b25a8917ab5161da6b6f1ab830cbba61bba371cffb0c34d
+        env:
+          # Configure vLLM for prefix caching with KV cache event publishing
+          - name: VLLM_ADDITIONAL_ARGS
+            value: '--enable-prefix-caching --tensor-parallel-size 2 --prefix-caching-hash-algo sha256_cbor --block-size 64 --kv-events-config ''{"enable_kv_cache_events": true, "publisher": "zmq", "endpoint": "tcp://granite4-1-30b-kv-cache-routing-epp-service:5557", "topic": "kv@$(POD_IP)@$(MODEL_NAME)"}'''
+          # Pod IP used in KV cache event topic
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                apiVersion: v1
+                fieldPath: status.podIP
+          - name: MODEL_NAME
+            value: ibm-granite/granite-4.1-30b
+          # Hash seed must match scheduler configuration
+          - name: PYTHONHASHSEED
+            value: "42"
+        resources:
+          limits:
+            cpu: '16'
+            memory: 128Gi
+            nvidia.com/gpu: "2"
+          requests:
+            cpu: '8'
+            memory: 64Gi
+            nvidia.com/gpu: "2"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+            scheme: HTTPS
+          initialDelaySeconds: 300
+          periodSeconds: 30
+          timeoutSeconds: 30
+          failureThreshold: 5

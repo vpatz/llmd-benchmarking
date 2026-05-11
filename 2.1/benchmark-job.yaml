@@ -1,0 +1,336 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: benhmark-job
+  namespace: vinod
+  #labels:
+  #  benchmark.ibm/owner: varun
+  #  benchmark.ibm/experiment: "1.1"
+  #  benchmark.ibm/model: "granite4-7b"
+  #  benchmark.ibm/profile: "concurrent"
+  #  benchmark.ibm/goal: "saturation-observation"
+spec:
+  activeDeadlineSeconds: 7200
+  template:
+    metadata: {}
+    spec:
+      hostAliases:
+      - ip: "172.30.6.28"
+        hostnames:
+        - inference-gateway.apps.sovereign-ai-stack-cl02.ocp.speedcloud.co.in
+      #serviceAccountName: guidellm-benchmark-sa
+      containers:
+      - name: guidellm
+        image: ghcr.io/vllm-project/guidellm:v0.6.0
+        env:
+        - name: HOME
+          value: /results
+        - name: HF_HOME
+          value: /results/.cache
+        - name: TOKENIZERS_PARALLELISM
+          value: "false"
+        #- name: GUIDELLM_TARGET
+        # value: https://granite4-7b-kv-cache-routing-inference-pool-ip-1cc08964.vinod.svc.cluster.local:8000
+        # value: https://granite4-7b-kv-cache-routing-kserve-workload-svc.vinod.svc.cluster.local:8000
+        - name: GUIDELLM_MODEL
+          value: ibm-granite/granite-4.1-30b
+        - name: GUIDELLM_PROCESSOR
+          value: ibm-granite/granite-4.1-30b
+        - name: GUIDELLM_RATE
+          #value: "50,100,150,200,250" #,500,750,1000"
+          value: "10,50" #,500,750,1000"
+        #- name: GUIDELLM_MAX_REQUESTS
+        #  value: "100"
+        - name: GUIDELLM_MAX_SECONDS
+          value: "30"
+        - name: GUIDELLM_DATASET
+          value: HuggingFaceH4/ultrachat_200k
+        - name: GUIDELLM_DATASET_SPLIT
+          value: train
+        - name: GUIDELLM_SHARED_PREFIX
+          value: "You are a helpful enterprise assistant. Follow security and compliance guidelines. Provide concise and accurate answers."
+        - name: GUIDELLM_DATA_BUILD_SAMPLES
+          value: "2000"
+        - name: GUIDELLM_DATA_SAMPLES
+          value: "1000"
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            set -eu
+            export GUIDELLM_TARGET_BASELINE="https://granite4-1-30b-kv-cache-routing-kserve-workload-svc.vinod.svc.cluster.local:8000"
+            export GUIDELLM_TARGET_EPP_DIRECT="https://granite4-1-30b-kv-cache-routing-inference-pool-ip-a4c20746.vinod.svc.cluster.local:8000"
+            # Route EPP through the inference Gateway/HTTPRoute path.
+            export GUIDELLM_TARGET_EPP_GATEWAY_BASE="${GUIDELLM_TARGET_EPP_GATEWAY_BASE:-https://inference-gateway.apps.sovereign-ai-stack-cl02.ocp.speedcloud.co.in/vinod/granite4-1-30b-kv-cache-routing}"
+            # Host header/SNI expected by the inference gateway listener.
+            export GUIDELLM_TARGET_EPP_HOST="${GUIDELLM_TARGET_EPP_HOST:-inference-gateway.apps.sovereign-ai-stack-cl02.ocp.speedcloud.co.in}"
+            if [ -n "${GUIDELLM_TARGET_EPP_GATEWAY_BASE}" ]; then
+              export GUIDELLM_TARGET_EPP="${GUIDELLM_TARGET_EPP_GATEWAY_BASE}"
+            else
+              export GUIDELLM_TARGET_EPP="${GUIDELLM_TARGET_EPP_DIRECT}"
+            fi
+
+            python -m pip install --no-cache-dir -q datasets
+            python - <<'PY'
+            import json
+            import os
+            import sys
+
+            import httpx
+            from datasets import load_dataset
+
+            dataset = os.environ.get("GUIDELLM_DATASET", "Open-Orca/OpenOrca")
+            split = os.environ.get("GUIDELLM_DATASET_SPLIT", "train")
+            limit = int(os.environ.get("GUIDELLM_DATA_BUILD_SAMPLES", "50000"))
+            shared_prefix = os.environ.get("GUIDELLM_SHARED_PREFIX", "").strip()
+
+            def build_prompt(row):
+                # OpenOrca-style rows.
+                question = (row.get("question") or "").strip()
+                system_prompt = (row.get("system_prompt") or "").strip()
+                if question:
+                    base = f"{system_prompt}\n\n{question}" if system_prompt else question
+                    return f"{shared_prefix}\n\n{base}" if shared_prefix else base
+
+                # Alpaca/Dolly-style rows.
+                instruction = (row.get("instruction") or "").strip()
+                input_text = (row.get("input") or row.get("context") or "").strip()
+                if instruction:
+                    base = f"{instruction}\n\nInput:\n{input_text}" if input_text else instruction
+                    return f"{shared_prefix}\n\n{base}" if shared_prefix else base
+
+                # Conversation-style rows (ShareGPT/UltraChat variants).
+                messages = row.get("messages") or row.get("conversations") or []
+                if isinstance(messages, list):
+                    parts = []
+                    for message in messages:
+                        if not isinstance(message, dict):
+                            continue
+                        role = (message.get("role") or message.get("from") or "").lower()
+                        if role in {"user", "human"}:
+                            content = (message.get("content") or message.get("value") or "").strip()
+                            if content:
+                                parts.append(content)
+                    if parts:
+                        base = "\n\n".join(parts)
+                        return f"{shared_prefix}\n\n{base}" if shared_prefix else base
+                return ""
+
+            split_candidates = [split]
+            if split == "train":
+                split_candidates.extend(["train_sft", "default"])
+
+            stream = None
+            last_exc = None
+            for candidate in split_candidates:
+                try:
+                    stream = load_dataset(dataset, split=candidate, streaming=True)
+                    if candidate != split:
+                        print(f"Dataset split fallback in use: {dataset}:{candidate}")
+                    break
+                except Exception as exc:
+                    last_exc = exc
+
+            if stream is None:
+                print(
+                    f"Failed to load dataset {dataset} with splits {split_candidates}: {last_exc}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+            written = 0
+            with open("/tmp/openorca-prompts.jsonl", "w", encoding="utf-8") as f:
+                for row in stream:
+                    prompt = build_prompt(row)
+                    if not prompt:
+                        continue
+                    f.write(json.dumps({"prompt": prompt}, ensure_ascii=False) + "\n")
+                    written += 1
+                    if written >= limit:
+                        break
+
+            if written == 0:
+                print("No prompts extracted from dataset", file=sys.stderr)
+                sys.exit(1)
+            print(f"Built /tmp/openorca-prompts.jsonl with {written} prompts")
+
+            target_baseline = os.environ["GUIDELLM_TARGET_BASELINE"].rstrip("/")
+            target_epp = os.environ["GUIDELLM_TARGET_EPP"].rstrip("/")
+            epp_host_header = os.environ.get("GUIDELLM_TARGET_EPP_HOST", "").strip()
+            
+            model = os.environ["GUIDELLM_MODEL"]
+            timeout = httpx.Timeout(60.0, connect=5.0)
+            token = os.environ.get("GATEWAY_TOKEN", "")
+            if not token:
+                try:
+                    with open("/var/run/secrets/kubernetes.io/serviceaccount/token", "r", encoding="utf-8") as tf:
+                        token = tf.read().strip()
+                except Exception:
+                    token = ""
+            headers = {"Authorization": f"Bearer {token}"} if token else {}
+            baseline_headers = dict(headers)
+            epp_headers = dict(headers)
+            if epp_host_header:
+                epp_headers["Host"] = epp_host_header
+            warmup_requests = int(os.environ.get("GUIDELLM_WARMUP_REQUESTS", "80"))
+
+            def invoke_completion(client, target, prompt_text):
+                completion = client.post(
+                    f"{target}/v1/chat/completions",
+                    json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": prompt_text}],
+                        "max_tokens": 8,
+                        "stream": False,
+                    },
+                )
+                if completion.status_code == 404:
+                    completion = client.post(
+                        f"{target}/v1/completions",
+                        json={
+                            "model": model,
+                            "prompt": prompt_text,
+                            "max_tokens": 8,
+                            "stream": False,
+                        },
+                    )
+                completion.raise_for_status()
+                if "choices" not in completion.json():
+                    raise ValueError("completion response missing choices")
+
+
+            try:
+                with httpx.Client(http2=True, verify=False, timeout=timeout, headers=baseline_headers) as client:
+                    models = client.get(f"{target_baseline}/v1/models")
+                    models.raise_for_status()
+                    if "data" not in models.json():
+                        raise ValueError("/v1/models response missing data")
+            except Exception as exc:
+                print(f"GuideLLM preflight failed for {target_baseline}: {exc}", file=sys.stderr)
+                sys.exit(1)
+
+            try:
+                with httpx.Client(http2=True, verify=False, timeout=timeout, headers=epp_headers) as client:
+                    models = client.get(f"{target_epp}/v1/models")
+                    models.raise_for_status()
+                    if "data" not in models.json():
+                        raise ValueError("/v1/models response missing data")
+
+                    # Try chat endpoint first (preferred for chat-tuned models), then
+                    # fall back to legacy completions for base models.
+                    invoke_completion(client, target_epp, "ping")
+            except Exception as exc:
+                print(f"GuideLLM preflight failed for {target_epp}: {exc}", file=sys.stderr)
+                sys.exit(1)
+
+            print(f"GuideLLM preflight passed for {target_epp}")
+            print(f"GuideLLM preflight passed for {target_baseline}")
+
+            if warmup_requests > 0:
+                warmup_prompts = []
+                with open("/tmp/openorca-prompts.jsonl", "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            warmup_prompts.append(json.loads(line)["prompt"])
+                        except Exception:
+                            continue
+                        if len(warmup_prompts) >= warmup_requests:
+                            break
+
+                if not warmup_prompts:
+                    print("No warmup prompts available; skipping warmup")
+                else:
+                    print(f"Warming caches with {len(warmup_prompts)} requests per target")
+                    for name, target in [("baseline", target_baseline), ("epp", target_epp)]:
+                        success = 0
+                        target_headers = baseline_headers if name == "baseline" else epp_headers
+                        with httpx.Client(http2=True, verify=False, timeout=timeout, headers=target_headers) as client:
+                            for prompt in warmup_prompts:
+                                try:
+                                    invoke_completion(client, target, prompt)
+                                    success += 1
+                                except Exception as exc:
+                                    print(f"Warmup request failed for {name}: {exc}", file=sys.stderr)
+                        print(f"Warmup finished for {name}: {success}/{len(warmup_prompts)}")
+            PY
+            
+
+            echo "Running benchmark for openorca data with baseline target"
+            BASELINE_BACKEND_KWARGS=$(python - <<'PY'
+            import json
+            import os
+
+            token = os.environ.get("GATEWAY_TOKEN", "").strip()
+            if not token:
+                try:
+                    with open("/var/run/secrets/kubernetes.io/serviceaccount/token", "r", encoding="utf-8") as tf:
+                        token = tf.read().strip()
+                except Exception:
+                    token = ""
+
+            kwargs = {
+                "api_key": token,
+                "validate_backend": False,
+                "timeout": 600.0,
+            }
+            print(json.dumps(kwargs))
+            PY
+            )
+            guidellm benchmark run \
+              --target "${GUIDELLM_TARGET_BASELINE}" \
+              --model "${GUIDELLM_MODEL}" \
+              --processor "${GUIDELLM_PROCESSOR}" \
+              --profile "concurrent" \
+              --rate "${GUIDELLM_RATE}" \
+              --max-seconds "${GUIDELLM_MAX_SECONDS}" \
+              --max-errors "200" \
+              --data "prompt_tokens=10000,output_tokens=1000" \
+              --output-dir "/results" \
+              --outputs "benchmark_results_openorca_baseline.json,benchmark_results_openorca_baseline.html,benchmark_results_openorca_baseline.csv" \
+              --backend-kwargs "${BASELINE_BACKEND_KWARGS}"
+
+            echo "Running benchmark for openorca data with EPP target"
+            EPP_BACKEND_KWARGS=$(python - <<'PY'
+            import json
+            import os
+
+            token = os.environ.get("GATEWAY_TOKEN", "").strip()
+            if not token:
+                try:
+                    with open("/var/run/secrets/kubernetes.io/serviceaccount/token", "r", encoding="utf-8") as tf:
+                        token = tf.read().strip()
+                except Exception:
+                    token = ""
+
+            kwargs = {
+                "api_key": token,
+                "validate_backend": False,
+                "timeout": 600.0,
+            }
+            print(json.dumps(kwargs))
+            PY
+            )
+            exec guidellm benchmark run \
+              --target "${GUIDELLM_TARGET_EPP}" \
+              --model "${GUIDELLM_MODEL}" \
+              --processor "${GUIDELLM_PROCESSOR}" \
+              --profile "concurrent" \
+              --rate "${GUIDELLM_RATE}" \
+              --max-seconds "${GUIDELLM_MAX_SECONDS}" \
+              --max-errors "200" \
+              --data "prompt_tokens=10000,output_tokens=1000" \
+              --output-dir "/results" \
+              --outputs "benchmark_results_openorca_epp.json,benchmark_results_openorca_epp.html,benchmark_results_openorca_epp.csv" \
+              --backend-kwargs "${EPP_BACKEND_KWARGS}"
+        
+        volumeMounts:
+        - name: results-volume
+          mountPath: /results
+      volumes:
+      - name: results-volume
+        persistentVolumeClaim:
+          claimName: guidellm-results-pvc
+      restartPolicy: Never
+  backoffLimit: 1
